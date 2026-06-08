@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+python-dotenv
+python-jose[cryptography]
+python-multipart
+jinja2
+google-genai
+Pillow
+psycopg2-binary
+pydantic[email]
