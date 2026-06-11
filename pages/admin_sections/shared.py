@@ -4,6 +4,7 @@ import io
 import time
 import re
 import json
+import textwrap
 import streamlit as st
 from google import genai
 from PIL import Image
@@ -177,15 +178,16 @@ Prescription text: {text}
 {ENGLISH_ONLY_RULE}
 
 IMPORTANT:
-- Extract exactly what the prescription says, but write every value in English
-- For each medicine, list: name, dose, times (Morning/Afternoon/Evening/Night), duration, uses
-- Uses = what is the medicine used/prescribed for (medical purpose only), in simple English
-- Uses must be BRIEF (max 2 lines/15 words): e.g. "Treats type 2 diabetes" or "Pain relief and fever reduction"
-- If information is unclear or missing, use "Not specified"
-- Return ONLY valid JSON array, no markdown, no extra text
+- Extract exactly what the prescription says, but write every value in English.
+- For each medicine, return fields: name, dose, times (Morning/Afternoon/Evening/Night), duration, instructions, uses, uses_explanation.
+- instructions = how to take the medicine in one short phrase.
+- uses = what the medicine is prescribed for, in simple English.
+- uses_explanation = two short sentences in normal English explaining why this medicine is used.
+- If information is unclear or missing, use "Not specified".
+- Return ONLY a valid JSON array, no markdown, no extra text.
 
 Example format:
-[{{"name":"Aspirin","dose":"500mg","times":"Morning","duration":"5 days","uses":"Pain relief"}},...]
+[{{"name":"Aspirin","dose":"500mg","times":"Morning","duration":"5 days","instructions":"Take one tablet in the Morning","uses":"Pain relief","uses_explanation":"Aspirin is used to relieve pain and lower fever. It helps reduce inflammation and ease mild to moderate pain."}},...]
 
 Prescription medicines:""")
     raw = re.sub(r"```(?:json)?", "", raw.strip()).strip("` \n")
@@ -198,6 +200,76 @@ Prescription medicines:""")
     except Exception as e:
         print(f"Parse error: {e}")
         return []
+
+
+def schedule_to_table_rows(schedule):
+    rows = []
+    for idx, med in enumerate(schedule, start=1):
+        times = med.get("times", [])
+        if isinstance(times, list):
+            times = ", ".join(times)
+        times = times or "Not specified"
+        instructions = med.get("instructions", med.get("how_to_take", "Not specified")) or "Not specified"
+        uses = med.get("uses", "Not specified") or "Not specified"
+        uses_explanation = med.get("uses_explanation", "") or "Not specified"
+        uses_explanation = uses_explanation.replace("\n", " ")
+        rows.append({
+            "#": idx,
+            "Medicine": med.get("name", "Unknown"),
+            "Dose": med.get("dose", "—"),
+            "Times": times,
+            "Duration": med.get("duration", "—"),
+            "How to take": instructions,
+            "Uses": uses,
+            "Uses explanation": uses_explanation,
+        })
+    return rows
+
+
+def schedule_to_html_table(schedule):
+    if not schedule:
+        return ""
+    rows = []
+    for idx, med in enumerate(schedule, start=1):
+        times = med.get("times", [])
+        if isinstance(times, list):
+            times = ", ".join(times)
+        times = times or "Not specified"
+        instructions = med.get("instructions", med.get("how_to_take", "Not specified")) or "Not specified"
+        uses = med.get("uses", "Not specified") or "Not specified"
+        uses_explanation = med.get("uses_explanation", "") or "Not specified"
+        uses_explanation = uses_explanation.replace("\n", " ")
+        rows.append(textwrap.dedent(f"""
+            <tr>
+                <td style=\"padding:12px 10px;border-top:1px solid rgba(148,163,184,0.15);font-weight:700;\">{idx}</td>
+                <td style=\"padding:12px 10px;border-top:1px solid rgba(148,163,184,0.15);\">{med.get('name','Unknown')}</td>
+                <td style=\"padding:12px 10px;border-top:1px solid rgba(148,163,184,0.15);\">{med.get('dose','—')}</td>
+                <td style=\"padding:12px 10px;border-top:1px solid rgba(148,163,184,0.15);\">{times}</td>
+                <td style=\"padding:12px 10px;border-top:1px solid rgba(148,163,184,0.15);\">{med.get('duration','—')}</td>
+                <td style=\"padding:12px 10px;border-top:1px solid rgba(148,163,184,0.15);\">{instructions}</td>
+                <td style=\"padding:12px 10px;border-top:1px solid rgba(148,163,184,0.15);\">{uses}</td>
+                <td style=\"padding:12px 10px;border-top:1px solid rgba(148,163,184,0.15);font-size:0.92rem;color:#cbd5e1;line-height:1.45;\">{uses_explanation}</td>
+            </tr>
+        """))
+    return textwrap.dedent(f"""
+<div class=\"glass-card\" style=\"overflow-x:auto;padding:0.5rem 0;\">
+<table style=\"width:100%;border-collapse:collapse;color:#e2e8f0;min-width:860px;\">
+    <thead>
+    <tr style=\"text-align:left;color:#a78bfa;font-size:0.92rem;\">
+        <th style=\"padding:12px 10px;border-bottom:1px solid rgba(148,163,184,0.25);\">#</th>
+        <th style=\"padding:12px 10px;border-bottom:1px solid rgba(148,163,184,0.25);\">Medicine</th>
+        <th style=\"padding:12px 10px;border-bottom:1px solid rgba(148,163,184,0.25);\">Dose</th>
+        <th style=\"padding:12px 10px;border-bottom:1px solid rgba(148,163,184,0.25);\">Times</th>
+        <th style=\"padding:12px 10px;border-bottom:1px solid rgba(148,163,184,0.25);\">Duration</th>
+        <th style=\"padding:12px 10px;border-bottom:1px solid rgba(148,163,184,0.25);\">How to take</th>
+        <th style=\"padding:12px 10px;border-bottom:1px solid rgba(148,163,184,0.25);\">Uses</th>
+        <th style=\"padding:12px 10px;border-bottom:1px solid rgba(148,163,184,0.25);\">Uses explanation</th>
+    </tr>
+    </thead>
+    <tbody>{''.join(rows)}</tbody>
+</table>
+</div>
+""")
 
 
 def is_error(text):

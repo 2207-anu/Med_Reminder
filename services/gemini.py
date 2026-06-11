@@ -200,11 +200,85 @@ def extract_patient_data(raw_text: str) -> dict:
         return {}
 
 
+def _retrieve_docs(query: str, top_k: int = 3) -> list:
+    """Retrieve relevant docs from PostgreSQL vector store using semantic similarity (Real RAG with Gemini)."""
+    try:
+        from services.postgres_vectorstore import PostgresVectorStore
+    except ImportError:
+        return []
+
+    try:
+        vector_store = PostgresVectorStore()
+        results = vector_store.similarity_search(query, k=top_k)
+        return results
+    except Exception:
+        return []
+
+
+def ingest_project_docs(max_docs: int = 100) -> int:
+    """Ingest project documentation into PostgreSQL vector store with sentence-transformers embeddings (free, no API key)."""
+    from pathlib import Path
+
+    try:
+        from langchain.text_splitter import RecursiveCharacterTextSplitter
+        from services.postgres_vectorstore import PostgresVectorStore
+    except ImportError:
+        return 0
+
+    repo_root = Path(__file__).resolve().parents[1]
+    search_dirs = [repo_root / "pages", repo_root / "routers", repo_root / "services", repo_root / "scripts"]
+
+    try:
+        # Initialize PostgreSQL vector store
+        print("🔄 Initializing PostgreSQL vector store...")
+        vector_store = PostgresVectorStore()
+        
+        splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
+        docs_added = 0
+
+        for search_dir in search_dirs:
+            if not search_dir.exists():
+                continue
+            for file_path in search_dir.rglob("*.*"):
+                if file_path.suffix.lower() not in {".py", ".md", ".txt"}:
+                    continue
+                try:
+                    text = file_path.read_text(encoding="utf8", errors="ignore")
+                    chunks = splitter.split_text(text)
+                    for chunk in chunks:
+                        if chunk.strip():
+                            vector_store.add_text(
+                                chunk,
+                                document_name=str(file_path),
+                                metadata={"source": str(file_path)}
+                            )
+                            docs_added += 1
+                            if docs_added >= max_docs:
+                                return docs_added
+                except Exception:
+                    continue
+
+        return docs_added
+    except RuntimeError as e:
+        print(f"❌ RAG not available: {e}")
+        return 0
+    except Exception as e:
+        print(f"❌ Error ingesting documents: {e}")
+        return 0
+
+
 def chat_about_prescription(context: str, question: str) -> str:
+    # Real RAG: retrieve docs from vector store using semantic similarity
+    retrieved_docs = _retrieve_docs(question, top_k=3)
+
+    rag_context = ""
+    if retrieved_docs:
+        rag_context = "\n\n--- Project Context (Retrieved via Vector DB) ---\n" + "\n".join(retrieved_docs)
+
     reply = gemini_call(
         f"Medical assistant. Answer based on context only.\n"
         f"{ENGLISH_ONLY_RULE}\n"
-        f"Context: {context}\n"
+        f"Patient Context: {context}{rag_context}\n"
         f"Question: {question}\n"
         f"Reply in simple English only, concise."
     )

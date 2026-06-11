@@ -1,21 +1,3 @@
-"""
-╔══════════════════════════════════════════════════════════════╗
-║         MedRemind — Production Database Layer                ║
-║                                                              ║
-║  SCHEMA DESIGN (Normalized, FK-linked):                      ║
-║                                                              ║
-║  users                                                       ║
-║    └── patient_records  (FK: user_id → users.id)            ║
-║          └── confirmed_medicines  (FK: patient_id → id)     ║
-║          └── prescription_schedules (FK: patient_id → id)   ║
-║                                                              ║
-║  Rule:                                                       ║
-║    patient_records  → personal info ONLY                     ║
-║    confirmed_medicines → medicines ONLY (separate table)     ║
-║    ON DELETE CASCADE → child rows auto-delete with parent    ║
-╚══════════════════════════════════════════════════════════════╝
-"""
-
 import hashlib
 import json
 from datetime import date, datetime
@@ -64,6 +46,8 @@ def _backfill_duration_days(cur) -> None:
 def init_db():
     conn = get_connection()
     cur  = conn.cursor()
+
+    # pgvector extension not required — using JSON-based embeddings instead
 
     # ── Table 1: users ──────────────────────────────────────────
     cur.execute("""
@@ -185,6 +169,23 @@ def init_db():
         ALTER TABLE email_logs
         ADD COLUMN IF NOT EXISTS doctor_email TEXT;
     """)
+
+    # ── Table 6: rag_documents (Vector Store for RAG) ───────────
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS rag_documents (
+            id            SERIAL    PRIMARY KEY,
+            document_name TEXT      NOT NULL,
+            content       TEXT      NOT NULL,
+            embedding     JSONB     NOT NULL DEFAULT '[]',
+            metadata      JSONB     DEFAULT '{}',
+            created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_rag_documents_name
+        ON rag_documents(document_name);
+    """)
+    print("✅ RAG vector store tables ready")
 
     # Default admin seed
     cur.execute("SELECT id FROM users WHERE email = %s", ("admin@medremind.com",))
@@ -421,9 +422,9 @@ def get_all_patients(user_id=None):
     if user_id is not None:
         cur.execute("""
             SELECT pr.*,
-                   u.email AS owner_email,
-                   u.full_name AS owner_name,
-                   COALESCE(NULLIF(TRIM(pr.added_by_email), ''), u.email) AS creator_email
+                u.email AS owner_email,
+                u.full_name AS owner_name,
+                COALESCE(NULLIF(TRIM(pr.added_by_email), ''), u.email) AS creator_email
             FROM patient_records pr
             LEFT JOIN users u ON pr.user_id = u.id
             WHERE pr.user_id = %s
@@ -432,9 +433,9 @@ def get_all_patients(user_id=None):
     else:
         cur.execute("""
             SELECT pr.*,
-                   u.email AS owner_email,
-                   u.full_name AS owner_name,
-                   COALESCE(NULLIF(TRIM(pr.added_by_email), ''), u.email) AS creator_email
+                u.email AS owner_email,
+                u.full_name AS owner_name,
+                COALESCE(NULLIF(TRIM(pr.added_by_email), ''), u.email) AS creator_email
             FROM patient_records pr
             LEFT JOIN users u ON pr.user_id = u.id
             ORDER BY pr.created_at DESC
@@ -449,9 +450,9 @@ def get_patient_by_email(email):
     cur  = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     cur.execute("""
         SELECT pr.*,
-               u.email AS owner_email,
-               u.full_name AS owner_name,
-               COALESCE(NULLIF(TRIM(pr.added_by_email), ''), u.email) AS creator_email
+            u.email AS owner_email,
+            u.full_name AS owner_name,
+            COALESCE(NULLIF(TRIM(pr.added_by_email), ''), u.email) AS creator_email
         FROM patient_records pr
         LEFT JOIN users u ON pr.user_id = u.id
         WHERE pr.email = %s

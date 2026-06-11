@@ -4,6 +4,7 @@ import streamlit as st
 from datetime import datetime
 from PIL import Image
 from pages.admin_sections.shared import *
+from services.gemini import chat_about_prescription
 
 def render(user):
     nav_col1, nav_col2, nav_col3, nav_spacer = st.columns([1,1,1,5])
@@ -65,7 +66,8 @@ def render(user):
                     st.markdown('<div class="glass-card"><div class="glass-card-title">🔍 Medicine Analysis</div></div>', unsafe_allow_html=True)
                     st.markdown(f'<div style="color:#cbd5e1;font-size:0.87rem;line-height:1.75;padding:4px 0">{st.session_state.analysis.replace(chr(10),"<br>")}</div>', unsafe_allow_html=True)
                     if st.session_state.schedule:
-                        st.markdown('<div style="margin-top:20px;background:rgba(167,139,250,0.07);border:1px solid rgba(167,139,250,0.2);border-radius:12px;padding:14px 18px;font-size:0.84rem;color:#a78bfa;line-height:1.6">✅ Schedule detected! Click 📅 Schedule above.</div>', unsafe_allow_html=True)
+                        st.markdown('<div style="margin-top:24px;margin-bottom:8px;font-weight:700;color:#a78bfa">✅ Extracted schedule</div>', unsafe_allow_html=True)
+                        st.table(schedule_to_table_rows(st.session_state.schedule))
             else:
                 st.markdown('<div style="height:420px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;border:1px dashed rgba(255,255,255,0.06);border-radius:18px;gap:12px"><div style="font-size:4.5rem;opacity:0.2">🩺</div><div style="font-family:\'Syne\',sans-serif;font-size:0.95rem;font-weight:700;color:#334155">Results appear here</div><div style="font-size:0.8rem;color:#1e293b;max-width:220px;line-height:1.6">Upload and click Analyze</div></div>', unsafe_allow_html=True)
 
@@ -91,13 +93,7 @@ def render(user):
                 if user_q.strip():
                     st.session_state.chat.append({"role":"user","text":user_q,"time":datetime.now().strftime("%I:%M %p")})
                     with st.spinner("Thinking..."):
-                        reply = gemini_call(
-                            f"Medical assistant. Answer based on context only.\n"
-                            f"{ENGLISH_ONLY_RULE}\n"
-                            f"Context: {st.session_state.context}\n"
-                            f"Question: {user_q}\n"
-                            f"Reply in simple English only, concise."
-                        )
+                        reply = chat_about_prescription(st.session_state.context, user_q)
                     if is_error(reply):
                         reply = "⚠️ Server busy. Please try again in a moment."
                     st.session_state.chat.append({"role":"bot","text":reply,"time":datetime.now().strftime("%I:%M %p")})
@@ -109,18 +105,4 @@ def render(user):
         if not st.session_state.schedule:
             st.markdown('<div style="padding:2rem;text-align:center;border:1px dashed rgba(255,255,255,0.07);border-radius:16px;color:#475569">⚠️ No schedule found. Please upload and analyze a prescription first.</div>', unsafe_allow_html=True)
         else:
-            time_icons = {"Morning":"🌅","Afternoon":"☀️","Evening":"🌆","Night":"🌙"}
-            for med in st.session_state.schedule:
-                times = med.get("times",[])
-                if isinstance(times, str): times = [t.strip() for t in times.split(",")]
-                badges = "".join([f'<span class="tbadge">{time_icons.get(t,"💊")} {t}</span>' for t in times])
-                st.markdown(f"""
-                <div class="med-pill-card">
-                <h4>💊 {med.get("name","Unknown")}</h4>
-                <div class="meta-grid">
-                    <div class="meta-cell"><span>Dose</span><strong>{med.get("dose","—")}</strong></div>
-                    <div class="meta-cell"><span>Duration</span><strong>{med.get("duration","—")}</strong></div>
-                    <div class="meta-cell"><span>Instructions</span><strong>{med.get("instructions","—")}</strong></div>
-                </div>
-                <div>{badges}</div>
-                </div>""", unsafe_allow_html=True)
+            st.table(schedule_to_table_rows(st.session_state.schedule))
